@@ -1,7 +1,37 @@
-language: node_js
+dist: trusty
+sudo: false
 
-before_install:
-  - git clone https://github.com/YunoHost/package_linter /tmp/package_linter
+language: python
+
+env:
+  global:
+    - secure: "apV/6JQ3lUXwqFsxKYBVj+Yrue+IohQFGIYu90bM/hbTQL1HLlXpTv8gaV/8rAhdfg+lpcXLNhzQUP1rRKhWDhdFK9Cp47l8jgt5k2NlhjwZfkX8R+x0mCyprD7EqRduME1kdJxYKXUvXfmjmstyYF66AQbzZaCLi9c+O2Kc+UdrE6h/Qiw9CP0RYJXzXO4wBz8Jw4xwvbzQmWLhcBEZJgYoHrBQQqWMqSM5t7DTmk/aaXa2UjfLVlSY2ssZW7T62ClGnsn9xVBO7bSGOIlQZpPrQs1A3rdmXCuRyze0WONKZxVFfzjlZJz7k7LiNY1TqyiSNYhZX9Nr35/T9oQJlV3VUxu8QCZuvFEcEZlJvzDT/qiTlyNS4a8ITx+uPP0lA0R6mMwMvQtjLDkrr/SnbaClEEQWA5xq4hNAuLNQ8D2Zw4r12afWNlhrzJ82sv/zQ676oBRvbdza93S1WAAYXBm7+hfDnV+aatcfW8Ef29mNiPKsiQrZDKvsIPSFetrZ2ukyZldKrLUgIy/AwOxD1n8CqIKwEJr9Df4MeCW7swEB8mdPydHLiO7Jh20wR/XLUq1gFCU/cNTMdapljhY0ZNn1QetKMlGtZjqCERj7rOC5W2ZpjXzQqyUPqOW0FJO8vQjgOh2rSNL/doAnyCBQtysb9SDjubmCcTwUm3ZVAvs="
+    - DROPLET_NAME="ynh26-pkgchk-${TRAVIS_BUILD_ID}"
+    - dropletsshcmd="./doctl compute ssh ${DROPLET_NAME} --ssh-command"
+    - DOCTL=./doctl
+
+install:
+  - ssh-keygen -b 2048 -t rsa -f ~/.ssh/id_rsa -q -N "" # to disable Warning: Identity file...not accessible
+  - echo "Host *" | tee -a ~/.ssh/config # to disable authenticity of host input y/n
+  - echo "   StrictHostKeyChecking=no" | tee -a ~/.ssh/config # to disable authenticity of host input y/n
+  - echo "   UserKnownHostsFile=/dev/null" | tee -a ~/.ssh/config # to disable authenticity of host input y/n
+  - curl -L https://github.com/digitalocean/doctl/releases/download/v1.8.0/doctl-1.8.0-linux-amd64.tar.gz  | tar xz
+  - echo "creating droplet with name ${DROPLET_NAME}"
+  - DROPLET_NAME=${DROPLET_NAME} ${DOCTL} compute ssh-key create ${DROPLET_NAME} --no-header --public-key "$(cat ~/.ssh/id_rsa.pub)"
+  - sleep 5
+  - DROPLET_NAME=${DROPLET_NAME} ${DOCTL} compute droplet create ${DROPLET_NAME} --region fra1 --image debian-8-x64 --size 8gb --ssh-keys $(${DOCTL} compute ssh-key list --no-header | grep ${DROPLET_NAME} | awk -F ' ' '{print $1}')
+
+after_script:
+  - ${DOCTL} compute droplet delete ${DROPLET_NAME} -f
+  - ${DOCTL} compute ssh-key delete $(${DOCTL} compute ssh-key list | grep ${DROPLET_NAME} | awk -F ' ' '{print $1}') -f
 
 script:
-  - /tmp/package_linter/package_linter.py ./
+  - sleep 60 #$doctl vm needs a few seconds to boot...60 proved to be safe.
+  - $dropletsshcmd "apt-get update -y"
+  - $dropletsshcmd "apt-get install git -y"
+  - $dropletsshcmd "git clone https://github.com/YunoHost/package_check"
+  - cat test/pkgchk-config | $dropletsshcmd "cat > package_check/config"
+  - $dropletsshcmd "git clone https://github.com/${TRAVIS_REPO_SLUG} package"
+  - $dropletsshcmd "cd package && git checkout ${TRAVIS_COMMIT} && cd .."
+  - $dropletsshcmd "./package_check/package_check.sh --build-lxc --bash-mode package"
+  - $dropletsshcmd "cat ./package_check/Complete.log"
